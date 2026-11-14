@@ -1,70 +1,81 @@
 package com.arfan.aihub
 
+import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.appcompat.app.AppCompatActivity
-import android.os.Bundle
-import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.FrameLayout
-import com.google.android.material.tabs.TabLayout
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.Spinner
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
 
 /**
- * AI Hub — hosts seven AI chat services, one WebView per tab.
+ * AI Hub — a Home grid of eight AI services, each opening in one shared WebView.
  *
- * Only the ACTIVE tab has a live WebView: switching tabs destroys the previous
- * WebView and creates + loads a new one. This keeps memory usage low on
- * low-RAM (3 GB) devices. Login state survives because cookies are persisted
- * by the shared CookieManager and flushed in onPause().
+ * Only ONE WebView is ever alive: leaving the chat screen or switching service
+ * destroys it and builds a fresh one. Login state still survives because the
+ * shared CookieManager keeps first- and third-party cookies on disk (flushed in
+ * [onPause]).
  */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var tabLayout: TabLayout
-    private lateinit var container: FrameLayout
+    // ---- Views -------------------------------------------------------
+    private lateinit var homeScreen: ScrollView
+    private lateinit var chatScreen: View
+    private lateinit var webContainer: FrameLayout
+    private lateinit var titleView: TextView
+    private lateinit var desktopButton: ImageButton
+    private lateinit var spinner: Spinner
 
-    /** The single live WebView of the currently selected tab, or null. */
+    // ---- State -------------------------------------------------------
     private var webView: WebView? = null
+    private var currentService: AiService? = null
 
-    /** Index of the currently selected tab. */
-    private var currentIndex: Int = 0
+    /** True while the chat screen (not Home) is showing. */
+    private var inChat = false
+
+    /**
+     * Index the spinner was last synchronised to. Spinner selection callbacks
+     * are posted asynchronously, so a simple "set and clear" flag would already
+     * be false by the time the callback runs. Comparing against this index is
+     * reliable and also ignores the initial onItemSelected(0) fired at attach.
+     */
+    private var spinnerSelectedIndex = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
         configureCookies()
 
-        tabLayout = findViewById(R.id.tab_layout)
-        container = findViewById(R.id.web_container)
+        homeScreen = findViewById(R.id.home_screen)
+        chatScreen = findViewById(R.id.chat_screen)
+        webContainer = findViewById(R.id.web_container)
+        titleView = findViewById(R.id.txt_title)
+        desktopButton = findViewById(R.id.btn_desktop)
+        spinner = findViewById(R.id.spinner)
 
-        for (tab in AiServices.TABS) {
-            tabLayout.addTab(tabLayout.newTab().setText(tab.label))
-        }
+        buildHomeGrid()
+        wireToolbar()
 
-        tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
-            override fun onTabSelected(tab: TabLayout.Tab) = showTab(tab.position)
-            override fun onTabUnselected(tab: TabLayout.Tab) = Unit
-            override fun onTabReselected(tab: TabLayout.Tab) {
-                // Reload when the user taps the already-active tab.
-                webView?.reload()
-            }
-        })
-
-        currentIndex = savedInstanceState?.getInt(STATE_INDEX) ?: 0
-        showTab(currentIndex)
+        val restored = AiServices.findById(savedInstanceState?.getString(STATE_SERVICE))
+        if (restored != null) openChat(restored) else showHome()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putInt(STATE_INDEX, currentIndex)
+        currentService?.let { outState.putString(STATE_SERVICE, it.id) }
     }
 
     override fun onPause() {
         super.onPause()
-        // Persist cookies so logins survive app restarts.
+        // Persist cookies so logins survive process death.
         CookieManager.getInstance().flush()
     }
 
@@ -74,101 +85,217 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Back button: navigate the WebView back if it can; otherwise jump to the
-     * previous tab. On the first tab with no history, let the system handle it
-     * (i.e. exit the app).
+     * Back: walk WebView history first, then return Home, then let the system
+     * close the app.
      */
+    @Deprecated("Overrides the framework method; kept for pre-33 back handling.")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         val wv = webView
-        if (wv != null && wv.canGoBack()) {
+        if (inChat && wv != null && wv.canGoBack()) {
             wv.goBack()
             return
         }
-        if (currentIndex > 0) {
-            tabLayout.getTabAt(currentIndex - 1)?.select()
+        if (inChat) {
+            showHome()
             return
         }
         super.onBackPressed()
     }
 
     // ------------------------------------------------------------------
-    // Tab / WebView management
+    // Home grid
     // ------------------------------------------------------------------
 
-    /** Destroy the old WebView and create a fresh one for [index]. */
-    private fun showTab(index: Int) {
-        destroyWebView()
-        currentIndex = index
-        val service = AiServices.TABS[index]
-        val wv = createWebView(service.url)
-        container.addView(
-            wv,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        webView = wv
+    /**
+     * Lays the eight service cards out as 2-column rows inside a vertical
+     * LinearLayout — simpler and more predictable than GridLayout on small
+     * screens, and each row splits its width evenly.
+     */
+    private fun buildHomeGrid() {
+        val grid = findViewById<LinearLayout>(R.id.grid_container)
+        val gap = dp(10)
+
+        AiServices.TABS.chunked(2).forEach { pair ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+
+            pair.forEach { service ->
+                val card = ServiceCardView(this, service)
+                card.setOnClickListener { openChat(service) }
+                row.addView(card, LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                ).apply {
+                    setMargins(gap, gap, gap, gap)
+                })
+            }
+
+            // Keep the last card half-width when the count is odd.
+            if (pair.size == 1) {
+                row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            }
+
+            grid.addView(row, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
     }
+
+    private fun wireToolbar() {
+        findViewById<ImageButton>(R.id.btn_home).setOnClickListener { showHome() }
+        findViewById<ImageButton>(R.id.btn_reload).setOnClickListener { webView?.reload() }
+        desktopButton.setOnClickListener { toggleDesktopMode() }
+
+        spinner.adapter = buildSpinnerAdapter()
+        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: AdapterView<*>?, view: View?, position: Int, id: Long
+            ) {
+                // Ignore echoes of our own programmatic selection (and the
+                // initial callback) — otherwise openChat() would re-run and
+                // race with a desktop/mobile toggle the user just made.
+                if (!inChat || position == spinnerSelectedIndex) return
+                val target = AiServices.TABS.getOrNull(position) ?: return
+                if (target.id == currentService?.id) {
+                    spinnerSelectedIndex = position
+                    return
+                }
+                openChat(target)
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+    }
+
+    /** Spinner entries: "Qwen · Planner" style, dark themed closed and expanded. */
+    private fun buildSpinnerAdapter(): ArrayAdapter<String> {
+        val labels = AiServices.TABS.map { "${it.label} · ${it.role}" }
+        return object : ArrayAdapter<String>(this, R.layout.item_spinner, labels) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+                bindSpinnerRow(getItem(position), convertView, parent, closed = true)
+
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View =
+                bindSpinnerRow(getItem(position), convertView, parent, closed = false)
+        }
+    }
+
+    private fun bindSpinnerRow(
+        label: String?,
+        convertView: View?,
+        parent: ViewGroup,
+        closed: Boolean
+    ): View {
+        val view = convertView ?: layoutInflater.inflate(R.layout.item_spinner, parent, false)
+        (view as TextView).text = label
+        // The closed spinner sits on the toolbar; the popup needs its own solid
+        // dark background so rows stay readable.
+        view.setBackgroundColor(if (closed) 0 else getColor(R.color.surface))
+        return view
+    }
+
+    // ------------------------------------------------------------------
+    // Navigation
+    // ------------------------------------------------------------------
+
+    /** Show the Home grid and release the WebView. */
+    private fun showHome() {
+        destroyWebView()
+        currentService = null
+        inChat = false
+        chatScreen.visibility = View.GONE
+        homeScreen.visibility = View.VISIBLE
+    }
+
+    /** Open [service] in the chat screen, replacing any existing WebView. */
+    private fun openChat(service: AiService) {
+        // installWebView() destroys any existing WebView before adding the new one.
+        currentService = service
+        inChat = true
+        homeScreen.visibility = View.GONE
+        chatScreen.visibility = View.VISIBLE
+        syncSpinner(service)
+
+        val desktop = ServicePrefs.isDesktop(this, service)
+        installWebView(service, desktop)
+    }
+
+    /**
+     * Destroys any current WebView and installs a fresh one for [service],
+     * resuming at [resumeUrl] when the user is switching rendering mode.
+     */
+    private fun installWebView(
+        service: AiService,
+        desktop: Boolean,
+        resumeUrl: String? = null
+    ) {
+        destroyWebView()
+        val wv = WebViewFactory.create(this, service, desktop, resumeUrl)
+        webContainer.addView(wv, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        webView = wv
+        updateToggleState(service, desktop)
+    }
+
+    /**
+     * Flip the current service between desktop and mobile, persist the choice,
+     * and rebuild the WebView so the new UA and viewport take effect.
+     */
+    private fun toggleDesktopMode() {
+        val service = currentService ?: return
+        val next = !ServicePrefs.isDesktop(this, service)
+        ServicePrefs.setDesktop(this, service, next)
+
+        // Stay on the page the user is looking at, just re-rendered.
+        val current = webView?.url
+        val resume = current?.takeIf { it.startsWith("http") }
+        installWebView(service, next, resume)
+    }
+
+    /** Reflects the active mode in the title and the toggle icon. */
+    private fun updateToggleState(service: AiService, desktop: Boolean) {
+        titleView.text = service.label
+        // Desktop icon when currently in desktop mode, phone icon in mobile mode.
+        desktopButton.setImageResource(
+            if (desktop) R.drawable.ic_desktop else R.drawable.ic_mobile
+        )
+        desktopButton.contentDescription = getString(
+            R.string.cd_desktop_toggle
+        ) + if (desktop) " (currently desktop)" else " (currently mobile)"
+    }
+
+    private fun syncSpinner(service: AiService) {
+        val position = AiServices.TABS.indexOfFirst { it.id == service.id }
+        if (position < 0) return
+        spinnerSelectedIndex = position
+        if (spinner.selectedItemPosition != position) {
+            spinner.setSelection(position, false)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // WebView lifecycle
+    // ------------------------------------------------------------------
 
     private fun destroyWebView() {
         webView?.let { wv ->
-            container.removeView(wv)
+            webContainer.removeView(wv)
             wv.stopLoading()
             wv.webChromeClient = null
+            // webViewClient has no nullable setter; a no-op client releases the
+            // Activity reference held by our real client before destroy().
+            wv.webViewClient = WebViewClient()
             wv.destroy()
         }
         webView = null
     }
 
-    private fun createWebView(url: String): WebView {
-        val wv = object : WebView(this) {
-            // Keep hardware keys working inside the WebView.
-            override fun onCheckIsTextEditor(): Boolean = true
-        }
-
-        val defaultUa = WebSettings.getDefaultUserAgent(this)
-        wv.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            // Strip "; wv" from the default UA so sites (especially Google
-            // sign-in) treat us like a regular Chrome browser.
-            userAgentString = desktopUserAgent(defaultUa)
-            javaScriptCanOpenWindowsAutomatically = true
-            setSupportMultipleWindows(false)
-            mediaPlaybackRequiresUserGesture = false
-            cacheMode = WebSettings.LOAD_DEFAULT
-            textZoom = 100
-        }
-
-        wv.webChromeClient = WebChromeClient()
-
-        wv.webViewClient = object : WebViewClient() {
-            /** All links stay inside this WebView. */
-            override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: WebResourceRequest
-            ): Boolean {
-                // Allow app-schema / mailto etc. to fall through to the system,
-                // but keep every http(s) navigation in-app.
-                val scheme = request.url.scheme ?: return false
-                return when (scheme) {
-                    "http", "https" -> {
-                        view.loadUrl(request.url.toString())
-                        true
-                    }
-                    else -> false
-                }
-            }
-        }
-
-        // Third-party cookies must be enabled on the WebView itself as well.
-        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
-
-        wv.loadUrl(url)
-        return wv
-    }
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
 
     /** Accept first- and third-party cookies globally (persisted logins). */
     private fun configureCookies() {
@@ -177,11 +304,10 @@ class MainActivity : AppCompatActivity() {
         cm.flush()
     }
 
-    companion object {
-        private const val STATE_INDEX = "current_tab_index"
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
-        /** Remove the WebView marker ("; wv") from a user-agent string. */
-        fun desktopUserAgent(defaultUa: String): String =
-            defaultUa.replace("; wv", "")
+    companion object {
+        private const val STATE_SERVICE = "current_service"
     }
 }

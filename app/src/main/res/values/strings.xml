@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AI Hub</string>
+    <string name="home_title">AI Hub</string>
+    <string name="home_subtitle">Eight assistants in one place. Pick a service to start chatting.</string>
+    <string name="cd_back_home">Back to home</string>
+    <string name="cd_desktop_toggle">Toggle desktop or mobile view</string>
+    <string name="cd_reload">Reload page</string>
 </resources>

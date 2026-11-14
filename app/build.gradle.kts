@@ -1,6 +1,40 @@
+import java.io.File
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// ---------------------------------------------------------------------------
+// Optional "stable" signing identity, supplied entirely through the
+// environment (populated from GitHub Secrets in CI). No key material is ever
+// stored in this repository — the keystore is decoded into the OS temp
+// directory at configuration time, which also keeps it out of the project.
+//
+// When the variables are absent (local builds, forks without secrets) the
+// default debug keystore is used, so `assembleDebug` still works.
+// ---------------------------------------------------------------------------
+val envKeystoreBase64: String? = System.getenv("KEYSTORE_BASE64")?.takeIf { it.isNotBlank() }
+val envKeyAlias: String? = System.getenv("KEY_ALIAS")
+val envStorePassword: String? = System.getenv("KEYSTORE_PASSWORD")
+val envKeyPassword: String? = System.getenv("KEY_PASSWORD")
+
+/** True only when every signing variable needed for a stable build is present. */
+val hasStableSigning: Boolean =
+    envKeystoreBase64 != null && envKeyAlias != null &&
+        envStorePassword != null && envKeyPassword != null
+
+/** Keystore decoded from KEYSTORE_BASE64 into the temp dir, or null. */
+val stableKeystoreFile: File? = if (hasStableSigning) {
+    val target = File(System.getProperty("java.io.tmpdir"), "aihub-stable-signing.jks")
+    // Secrets are usually single-line, but tolerate stray whitespace/newlines
+    // if the value was pasted with wrapping.
+    val cleaned = envKeystoreBase64!!.filterNot { it.isWhitespace() }
+    target.outputStream().use { out -> out.write(Base64.getDecoder().decode(cleaned)) }
+    target
+} else {
+    null
 }
 
 android {
@@ -15,13 +49,41 @@ android {
         versionName = "0.1"
     }
 
+    // Declared before buildTypes so both build types can reference it.
+    signingConfigs {
+        if (hasStableSigning) {
+            create("stable") {
+                storeFile = stableKeystoreFile
+                storePassword = envStorePassword
+                keyAlias = envKeyAlias
+                keyPassword = envKeyPassword
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // Override only when a stable identity exists, so CI-built APKs can
+            // be installed over one another as updates.
+            if (hasStableSigning) {
+                signingConfig = signingConfigs.getByName("stable")
+            }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasStableSigning) {
+                signingConfig = signingConfigs.getByName("stable")
+            }
+        }
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
         }
     }
 
@@ -39,5 +101,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.test:core:1.6.1")
 }

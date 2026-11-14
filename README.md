@@ -1,75 +1,50 @@
 # AI Hub
 
-A lightweight native Android app that puts **seven AI chat services** behind one
-bottom tab bar — no accounts juggling, no browser tabs, and logins persist
-across restarts.
+A lightweight Android app for using eight AI services from one Home screen. It
+uses one live WebView at a time, and keeps service logins across restarts.
 
-| Tab | URL |
-| --- | --- |
-| Qwen | https://chat.qwen.ai |
-| Gemini | https://gemini.google.com |
-| DeepSeek | https://chat.deepseek.com |
-| Zai | https://chat.z.ai |
-| Meta | https://www.meta.ai |
-| MiniMax | https://agent.minimax.io |
-| MiMo | https://aistudio.xiaomimimo.com/#/c |
+| Service | URL | Role | Default |
+| --- | --- | --- | --- |
+| Qwen | https://chat.qwen.ai | Planner | Mobile |
+| Coder | https://coder.qwen.ai | Builder | Desktop |
+| Gemini | https://gemini.google.com | Design/Language | Mobile |
+| DeepSeek | https://chat.deepseek.com | Code review | Mobile |
+| Meta | https://www.meta.ai | Logic review | Mobile |
+| Zai | https://chat.z.ai | Senior review | Mobile |
+| MiniMax | https://agent.minimax.io | Optional | Mobile |
+| MiMo | https://aistudio.xiaomimimo.com/#/c | General | Mobile |
 
 ## Features
 
-- **One WebView at a time.** Only the active tab has a live WebView; switching
-  tabs destroys the old one and creates a fresh one. This keeps RAM usage low
-  even on 3 GB devices.
-- **Persistent logins.** First-party and third-party cookies are accepted and
-  flushed to disk in `onPause()`, plus DOM storage is enabled — sign in once
-  and stay signed in.
-- **Real browser user-agent.** The `"; wv"` marker is stripped from the default
-  WebView UA so Google sign-in (Gemini) works properly.
-- **Smart back button.** Back navigates the WebView history if possible,
-  otherwise it switches to the previous tab.
-- **Dark theme** with a scrollable bottom tab bar so all seven labels fit on
-  small screens.
+- Dark, two-column Home grid; tap a card to open its service.
+- Toolbar service switcher, Home, reload and desktop/mobile toggle.
+- Coder starts in desktop mode (Windows Chrome UA, wide viewport, 1280px
+  viewport meta); each service's mode choice is saved separately.
+- Mobile mode uses the default WebView UA without the `; wv` marker.
+- One WebView is destroyed when leaving or switching services. JavaScript,
+  DOM storage, cookies and in-app links are enabled; cookies are flushed on pause.
 
-## Download & install the APK
+## Install
 
-Every push to `main` (and every manual run of the **Build Debug APK** workflow)
-publishes a GitHub Release with the debug APK attached.
+Download `app-debug.apk` from the latest [GitHub Release](../../releases) and
+install it on an Android device (minSdk 29).
 
-1. Go to the repository's **[Releases](../../releases)** page.
-2. Open the latest release (e.g. `v0.1.42`) and download
-   **`app-debug.apk`** under *Assets*.
-3. Copy the APK to your phone (USB, Drive, etc.) and tap it to install.
-4. On first install, Android will ask you to allow installing apps from this
-   source (Settings → Apps → Special access → Install unknown apps). Tap
-   **Allow**, then **Install**.
-5. Open **AI Hub**, pick a tab, and log in to your service — the session will
-   be remembered.
+## Build and signing
 
-> The APK is built as a *debug* build and is signed with the standard debug
-> key, which is fine for personal installs but not for Play Store distribution.
-
-## Building locally
-
-Requirements: JDK 17, Android SDK (API 34), or just Gradle 8.7:
+Use JDK 17, Android SDK 34 and Gradle 8.7:
 
 ```bash
 gradle assembleDebug
-# Output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The repository intentionally ships **without** `gradle-wrapper.jar`; CI installs
-Gradle itself via `gradle/actions/setup-gradle@v4`.
+The `Build Debug APK` workflow publishes the APK. Stable signing is read only
+from GitHub Secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, and
+`KEY_PASSWORD`. Gradle decodes the keystore to a temp file; without all signing
+environment variables, it uses the default debug key. No key material is stored
+in the repository; `*.jks` and `*.keystore` are ignored.
 
-## Project layout
+## Project
 
-```
-app/src/main/java/com/arfan/aihub/
-├── AiServices.kt     # single config list of tabs (label + URL)
-└── MainActivity.kt   # tab bar + single-WebView lifecycle management
-```
-
-To add or remove a service, edit `AiServices.TABS` only.
-
-## Tech stack
-
-- Kotlin 2.0.20, AGP 8.5.2, compileSdk 34, minSdk 29
-- Material Components (`TabLayout`), plain `WebView` — no other runtime deps
+`AiServices.kt` is the single service list; the Home grid and toolbar dropdown
+are generated from it. The app uses Kotlin 2.0.20, AGP 8.5.2, compileSdk 34,
+minSdk 29, and only Material Components/AppCompat alongside AndroidX core.
