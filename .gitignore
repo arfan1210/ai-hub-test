@@ -1,9 +1,10 @@
+*.iml
 .gradle/
-build/
 local.properties
 .idea/
-*.iml
-*.iws
-out/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
 .DS_Store
-Thumbs.db
