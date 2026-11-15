@@ -69,6 +69,13 @@ All notable changes to AI Hub. This file is maintained for **every** release
 - Tests extended for nine services, the verdict parser, settings/caps, session
   persistence, JS escaping and the review-bar/overlay behaviour.
 
+### Verified
+
+- `gradle assembleDebug` and `gradle testDebugUnitTest` both pass in CI on a
+  clean checkout: **65 unit tests, 0 failures** (Robolectric `AppBehaviourTest`
+  + `ReviewLogicTest`). The initial revision had two compile errors and one
+  parser test failure; all three are fixed in this branch.
+
 ### Fixed (regressions from earlier attempts, now guarded by code and tests)
 
 - Verdicts are read only from assistant nodes, so the user's prompt can never be
