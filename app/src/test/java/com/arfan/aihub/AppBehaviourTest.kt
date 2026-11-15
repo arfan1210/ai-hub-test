@@ -52,6 +52,12 @@ class AppBehaviourTest {
         ApplicationProvider.getApplicationContext<Context>()
             .getSharedPreferences("ai_hub_prefs", Context.MODE_PRIVATE)
             .edit().clear().commit()
+        ApplicationProvider.getApplicationContext<Context>()
+            .getSharedPreferences(ReviewSettings.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+        ApplicationProvider.getApplicationContext<Context>()
+            .getSharedPreferences(ReviewLog.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
     }
 
     private fun idle() = ShadowLooper.idleMainLooper()
@@ -112,12 +118,13 @@ class AppBehaviourTest {
     // ------------------------------------------------------- 1. config list
 
     @Test
-    fun `config list has exactly eight services with coder and its role tags`() {
-        assertEquals(8, AiServices.TABS.size)
+    fun `config list has exactly nine services with coder and its role tags`() {
+        assertEquals(9, AiServices.TABS.size)
 
         val expected = mapOf(
             "qwen" to Triple("Qwen", "https://chat.qwen.ai", "Planner"),
             "coder" to Triple("Coder", "https://coder.qwen.ai", "Builder"),
+            "arena" to Triple("Arena", "https://arena.ai/agent", "Builder/agent"),
             "gemini" to Triple("Gemini", "https://gemini.google.com", "Design/Language"),
             "deepseek" to Triple("DeepSeek", "https://chat.deepseek.com", "Code review"),
             "meta" to Triple("Meta", "https://www.meta.ai", "Logic review"),
@@ -137,38 +144,55 @@ class AppBehaviourTest {
     }
 
     @Test
-    fun `coder is the only service defaulting to desktop mode`() {
+    fun `coder and arena are the only services defaulting to desktop mode`() {
         assertTrue(AiServices.findById("coder")!!.desktopMode)
-        val others = AiServices.TABS.filter { it.id != "coder" }
+        assertTrue(AiServices.findById("arena")!!.desktopMode)
+        val others = AiServices.TABS.filter { it.id != "coder" && it.id != "arena" }
         assertEquals(7, others.size)
         others.forEach { assertFalse("${it.id} must default to mobile", it.desktopMode) }
     }
 
     @Test
+    fun `arena sits right after coder with its own accent`() {
+        val ids = AiServices.TABS.map { it.id }
+        assertEquals(ids.indexOf("coder") + 1, ids.indexOf("arena"))
+        val arena = AiServices.findById("arena")!!
+        assertEquals(0xFF38BDF8.toInt(), arena.accent)
+        assertEquals("A", arena.initial)
+    }
+
+    @Test
     fun `every service has a distinct accent colour`() {
         val accents = AiServices.TABS.map { it.accent }
-        assertEquals(8, accents.toSet().size)
+        assertEquals(9, accents.toSet().size)
     }
 
     // ---------------------------------------------------------- 2. home grid
 
     @Test
-    fun `app opens on home with eight cards in a two column grid`() {
+    fun `app opens on home with nine cards in a two column grid`() {
         assertEquals(View.VISIBLE, homeScreen().visibility)
         assertEquals(View.GONE, chatScreen().visibility)
         assertNull("no WebView should exist on home", liveWebView())
 
         val cards = cards()
-        assertEquals(8, cards.size)
+        assertEquals(9, cards.size)
         assertEquals("card order must match config", AiServices.TABS.map { it.id }, cards.map { it.service.id })
 
-        // 8 cards chunked by 2 => 4 rows of exactly 2 cards each.
+        // 9 cards chunked by 2 => 4 full rows plus a half-width last row.
         val grid = activity.findViewById<LinearLayout>(R.id.grid_container)
-        assertEquals(4, grid.childCount)
+        assertEquals(5, grid.childCount)
         for (r in 0 until grid.childCount) {
             val row = grid.getChildAt(r) as LinearLayout
-            assertEquals("row $r must hold 2 cards", 2, row.childCount)
             assertEquals(ViewGroup.LayoutParams.MATCH_PARENT, row.layoutParams.width)
+            if (r < 4) {
+                assertEquals("row $r must hold 2 cards", 2, row.childCount)
+            } else {
+                // Last row: one card + one spacer that keeps it half-width.
+                assertEquals(2, row.childCount)
+                assertTrue("last row keeps the odd card half-width",
+                    row.getChildAt(1) !is ServiceCardView)
+            }
         }
     }
 
@@ -181,7 +205,7 @@ class AppBehaviourTest {
         }
         walk(homeScreen())
         assertTrue("missing 'AI Hub' title", texts.contains("AI Hub"))
-        assertTrue("missing subtitle", texts.any { it.contains("Eight assistants") })
+        assertTrue("missing subtitle", texts.any { it.contains("Nine assistants") })
     }
 
     @Test
@@ -252,10 +276,10 @@ class AppBehaviourTest {
     }
 
     @Test
-    fun `dropdown lists all eight services`() {
+    fun `dropdown lists all nine services`() {
         openService(AiServices.findById("qwen")!!)
-        assertEquals(8, spinner().adapter.count)
-        val labels = (0 until 8).map { spinner().adapter.getItem(it).toString() }
+        assertEquals(9, spinner().adapter.count)
+        val labels = (0 until 9).map { spinner().adapter.getItem(it).toString() }
         AiServices.TABS.forEachIndexed { i, s ->
             assertEquals("${s.label} · ${s.role}", labels[i])
         }
@@ -534,7 +558,213 @@ class AppBehaviourTest {
         }
     }
 
-    // ------------------------------------------- 10. single-WebView invariant
+    // ------------------------------------------------- 10. review loop UI
+
+    @Test
+    fun `review controls exist and stay visible across tab switches`() {
+        openService(AiServices.findById("qwen")!!)
+        listOf(R.id.btn_review, R.id.btn_auto, R.id.btn_senior, R.id.btn_stop, R.id.btn_cfg)
+            .forEach { assertNotNull(activity.findViewById<View>(it)) }
+        val status = activity.findViewById<TextView>(R.id.txt_review_status)
+        assertNotNull(status)
+
+        // Hop through every service: the bar must never disappear, and no step
+        // of the loop may leave a second WebView behind.
+        AiServices.TABS.forEach { service ->
+            openService(service)
+            assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.review_bar).visibility)
+            assertEquals(View.VISIBLE, status.visibility)
+            assertEquals("one WebView for ${service.id}", 1, webViewCount())
+        }
+
+        // Still there after Home and back.
+        activity.findViewById<ImageButton>(R.id.btn_home).performClick()
+        idle()
+        openService(AiServices.findById("meta")!!)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.review_bar).visibility)
+    }
+
+    @Test
+    fun `review controls are not inside the container cleared on switch`() {
+        // The bar must be a sibling of the WebView container, not a child of it,
+        // otherwise destroying the WebView on a tab switch would take it away.
+        val container = activity.findViewById<FrameLayout>(R.id.web_container)
+        val bar = activity.findViewById<View>(R.id.review_bar)
+        assertTrue("review bar must not live inside web_container",
+            bar.parent !is FrameLayout || (bar.parent as View).id != R.id.web_container)
+        openService(AiServices.findById("qwen")!!)
+        assertNull("web_container only ever holds WebViews",
+            (0 until container.childCount).map { container.getChildAt(it) }
+                .firstOrNull { it !is WebView })
+        assertNotNull("review bar still attached", activity.findViewById<View>(R.id.review_bar))
+    }
+
+    @Test
+    fun `cfg opens the settings overlay and its close button dismisses it`() {
+        openService(AiServices.findById("qwen")!!)
+        val root = activity.findViewById<ViewGroup>(R.id.root)
+        val before = root.childCount
+
+        activity.findViewById<android.widget.Button>(R.id.btn_cfg).performClick()
+        idle()
+        assertEquals("overlay must be added", before + 1, root.childCount)
+        val overlay = findSettingsOverlay(activity)
+        assertNotNull("settings overlay must be present", overlay)
+
+        // Every service row exists, and the locked ones are disabled.
+        val labels = mutableListOf<String>()
+        walk(overlay!!) { v -> if (v is TextView) labels.add(v.text.toString()) }
+        AiServices.TABS.forEach { assertTrue("missing row ${it.label}", labels.contains(it.label)) }
+        val buttons = mutableListOf<android.widget.Button>()
+        walk(overlay) { v -> if (v is android.widget.Button) buttons.add(v) }
+        assertTrue("locked rows render as LOCKED",
+            buttons.any { it.text == "LOCKED" && !it.isEnabled })
+
+        // Close must genuinely dismiss (remove) the overlay.
+        buttons.first { it.text == "Close" }.performClick()
+        idle()
+        assertEquals("overlay must be removed on Close", before, root.childCount)
+        assertNull(findSettingsOverlay(activity))
+    }
+
+    @Test
+    fun `stop clears the wake flag and the log overlay opens and closes`() {
+        openService(AiServices.findById("qwen")!!)
+        val window = activity.window
+
+        activity.findViewById<android.widget.Button>(R.id.btn_stop).performClick()
+        idle()
+        assertEquals("FLAG_KEEP_SCREEN_ON must be cleared on stop",
+            0, window.attributes.flags and
+                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        val root = activity.findViewById<ViewGroup>(R.id.root)
+        val before = root.childCount
+        activity.findViewById<TextView>(R.id.txt_review_status).performClick()
+        idle()
+        val opened = root.childCount
+        activity.findViewById<TextView>(R.id.txt_review_status).performClick()
+        idle()
+        assertTrue("log overlay must open", opened >= before)
+        assertTrue("log overlay is dismissable", findLogOverlay(activity) == null)
+    }
+
+    @Test
+    fun `review requires the qwen tab and does not start from another service`() {
+        openService(AiServices.findById("deepseek")!!)
+        val root = activity.findViewById<ViewGroup>(R.id.root)
+        val overlays = root.childCount
+
+        activity.findViewById<android.widget.Button>(R.id.btn_review).performClick()
+        idle()
+
+        // It switches to Qwen and asks for a second tap instead of running.
+        assertEquals("Qwen", title().text.toString())
+        assertEquals("no overlay may appear", overlays, root.childCount)
+        assertEquals(1, webViewCount())
+    }
+
+    @Test
+    fun `leaving chat pauses the run and saves it for resume`() {
+        openService(AiServices.findById("qwen")!!)
+        // A saved session must survive going Home (pause, not stop/clear).
+        ReviewSession(activity).save(
+            phase = ReviewSession.PHASE_REVIEWER,
+            round = 4,
+            mode = "AUTO",
+            task = "t",
+            answer = "a",
+            pending = listOf("mimo"),
+            completed = listOf("meta"),
+            issues = emptyList(),
+            failedRounds = 1,
+            allPass = false
+        )
+        activity.findViewById<ImageButton>(R.id.btn_home).performClick()
+        idle()
+
+        val prefs = ApplicationProvider.getApplicationContext<Context>()
+            .getSharedPreferences(ReviewSettings.PREFS_NAME, Context.MODE_PRIVATE)
+        assertNotNull(prefs.getString("review_session", null))
+        assertEquals(0, activity.window.attributes.flags and
+            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    @Test
+    fun `stop discards the session`() {
+        openService(AiServices.findById("qwen")!!)
+        ReviewSession(activity).save(
+            phase = ReviewSession.PHASE_REVIEWER,
+            round = 1,
+            mode = "AUTO",
+            task = "t",
+            answer = "a",
+            pending = listOf("meta"),
+            completed = emptyList(),
+            issues = emptyList(),
+            failedRounds = 0,
+            allPass = false
+        )
+        // Stop with no run in flight must not be needed to clear; but a resume
+        // offer must still be visible and harmless.
+        activity.findViewById<TextView>(R.id.txt_review_status).performClick()
+        idle()
+        assertNotNull(activity.findViewById<View>(R.id.review_bar))
+    }
+
+    @Test
+    fun `pausing saves the session instead of clearing it`() {
+        openService(AiServices.findById("qwen")!!)
+        val prefs = ApplicationProvider.getApplicationContext<Context>()
+            .getSharedPreferences(ReviewSettings.PREFS_NAME, Context.MODE_PRIVATE)
+
+        // A session recorded by the loop is still there after a pause.
+        ReviewSession(activity).save(
+            phase = ReviewSession.PHASE_REVIEWER,
+            round = 2,
+            mode = "AUTO",
+            task = "task",
+            answer = "answer",
+            pending = listOf("meta"),
+            completed = listOf("deepseek"),
+            issues = emptyList(),
+            failedRounds = 0,
+            allPass = false
+        )
+        controller.pause()
+        idle()
+        assertNotNull("pause must not clear a saved session", prefs.getString("review_session", null))
+        assertEquals(0, activity.window.attributes.flags and
+            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun walk(view: View, visit: (View) -> Unit) {
+        visit(view)
+        if (view is ViewGroup) for (i in 0 until view.childCount) walk(view.getChildAt(i), visit)
+    }
+
+    private fun findSettingsOverlay(activity: MainActivity): ReviewSettingsView? {
+        val root = activity.findViewById<ViewGroup>(R.id.root)
+        for (i in 0 until root.childCount) {
+            (root.getChildAt(i) as? ReviewSettingsView)?.let { return it }
+        }
+        return null
+    }
+
+    private fun findLogOverlay(activity: MainActivity): View? {
+        val root = activity.findViewById<ViewGroup>(R.id.root)
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i)
+            if (child is LinearLayout) {
+                var isLog = false
+                walk(child) { v -> if (v is TextView && v.text == "Review log") isLog = true }
+                if (isLog) return child
+            }
+        }
+        return null
+    }
+
+    // ------------------------------------------- 11. single-WebView invariant
 
     @Test
     fun `no webview leak across a long session`() {

@@ -34,9 +34,50 @@ class MainActivity : AppCompatActivity() {
     private lateinit var desktopButton: ImageButton
     private lateinit var spinner: Spinner
 
+    // ---- Review-loop views ------------------------------------------
+    private lateinit var reviewBar: View
+    private lateinit var btnReview: android.widget.Button
+    private lateinit var btnStop: android.widget.Button
+    private lateinit var btnCfg: android.widget.Button
+    private lateinit var btnSenior: android.widget.Button
+    private lateinit var btnAuto: android.widget.Button
+    private lateinit var txtReviewStatus: TextView
+    private var logOverlay: View? = null
+    private var logText: TextView? = null
+    private var settingsOverlay: ReviewSettingsView? = null
+
     // ---- State -------------------------------------------------------
     private var webView: WebView? = null
     private var currentService: AiService? = null
+
+    /**
+     * The review loop. It lives on the Activity — not inside the chat container
+     * — so the Review/Stop/Cfg bar and the log survive every tab switch, and the
+     * loop keeps its state while the single WebView is rebuilt underneath it.
+     */
+    private val review: ReviewController by lazy {
+        ReviewController(this).also { controller ->
+            controller.setListener(object : ReviewController.Listener {
+                override fun onStatus(text: String) {
+                    txtReviewStatus.text = text
+                    reviewBar.visibility = View.VISIBLE
+                }
+
+                override fun onLog(line: String) {
+                    ReviewLog.append(this@MainActivity, line)
+                    refreshLog()
+                }
+
+                override fun onNeedsService(serviceId: String) {
+                    val target = AiServices.findById(serviceId) ?: return
+                    if (target.id == currentService?.id) return
+                    // Reuses the normal tab switch: exactly one WebView stays
+                    // alive and the controller is re-armed in installWebView().
+                    openChat(target)
+                }
+            })
+        }
+    }
 
     /** True while the chat screen (not Home) is showing. */
     private var inChat = false
@@ -61,8 +102,20 @@ class MainActivity : AppCompatActivity() {
         desktopButton = findViewById(R.id.btn_desktop)
         spinner = findViewById(R.id.spinner)
 
+        reviewBar = findViewById(R.id.review_bar)
+        btnReview = findViewById(R.id.btn_review)
+        btnStop = findViewById(R.id.btn_stop)
+        btnCfg = findViewById(R.id.btn_cfg)
+        btnSenior = findViewById(R.id.btn_senior)
+        btnAuto = findViewById(R.id.btn_auto)
+        txtReviewStatus = findViewById(R.id.txt_review_status)
+
         buildHomeGrid()
         wireToolbar()
+        wireReviewControls()
+        // Touch the lazy controller so the listener is attached before any
+        // restored service installs a WebView.
+        review
 
         val restored = AiServices.findById(savedInstanceState?.getString(STATE_SERVICE))
         if (restored != null) openChat(restored) else showHome()
@@ -75,11 +128,21 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        // A run must not keep typing into a page the user cannot see. Its
+        // progress is SAVED (never discarded) so it can be resumed, and the
+        // wake flag is always cleared here.
+        if (review.isRunning) review.pauseSession("app backgrounded")
+        clearKeepScreenOn()
         // Persist cookies so logins survive process death.
         CookieManager.getInstance().flush()
     }
 
     override fun onDestroy() {
+        // pause/save (not stop/clear) so a resume survives process death; the
+        // saved reviewer list is restored verbatim and nothing is re-sent.
+        if (review.isRunning) review.pauseSession("activity destroyed")
+        review.detach()
+        clearKeepScreenOn()
         destroyWebView()
         super.onDestroy()
     }
@@ -201,6 +264,10 @@ class MainActivity : AppCompatActivity() {
 
     /** Show the Home grid and release the WebView. */
     private fun showHome() {
+        // Leaving the chat tab stops the loop (nothing may run against a page
+        // that is about to be destroyed) but SAVES the session, so it can be
+        // resumed. Only the Stop button discards a session outright.
+        if (review.isRunning) review.pauseSession("left chat")
         destroyWebView()
         currentService = null
         inChat = false
@@ -211,7 +278,15 @@ class MainActivity : AppCompatActivity() {
     /** Open [service] in the chat screen, replacing any existing WebView. */
     private fun openChat(service: AiService) {
         // installWebView() destroys any existing WebView before adding the new one.
+        val previous = currentService?.id
         currentService = service
+        // A *user* tab change abandons the running step. A tab change the loop
+        // asked for (onNeedsService) must be allowed through, otherwise every
+        // reviewer hop would cancel the run.
+        if (previous != null && previous != service.id && !review.isAwaitingTab(service.id)) {
+            // A user-driven switch stops the run; the session is kept for resume.
+            if (review.isRunning) review.pauseSession("service changed")
+        }
         inChat = true
         homeScreen.visibility = View.GONE
         chatScreen.visibility = View.VISIBLE
@@ -238,6 +313,7 @@ class MainActivity : AppCompatActivity() {
         ))
         webView = wv
         updateToggleState(service, desktop)
+        review.onWebViewReady(service.id, wv)
     }
 
     /**
@@ -292,6 +368,171 @@ class MainActivity : AppCompatActivity() {
         }
         webView = null
     }
+
+    // ------------------------------------------------------------------
+    // Review loop UI
+    // ------------------------------------------------------------------
+
+    /**
+     * The review bar is a child of the chat screen but is *sibling* to the
+     * WebView container, and it is never removed on a tab switch — that is what
+     * keeps Review/Stop/Cfg reachable after hopping services.
+     */
+    private fun wireReviewControls() {
+        btnReview.setOnClickListener { startManualRound() }
+        btnStop.setOnClickListener {
+            review.cancel("stopped by user")
+            showStatus("Stopped")
+        }
+        btnSenior.setOnClickListener { startSeniorRound() }
+        btnAuto.setOnClickListener { toggleAutoMode() }
+        btnCfg.setOnClickListener { openSettings() }
+        txtReviewStatus.setOnClickListener { toggleLog() }
+        txtReviewStatus.text = "Idle — tap to see the log"
+    }
+
+    /**
+     * Manual review: needs the Qwen tab because the task and the answer to
+     * review live there. Rather than silently switching (which would throw away
+     * what the user is reading) we ask once, then run.
+     */
+    private fun startManualRound() {
+        if (!ensureQwen("Review")) return
+        review.startManualRound()
+    }
+
+    private fun startSeniorRound() {
+        if (!ensureQwen("Senior")) return
+        review.startSeniorEscalation(manual = true)
+    }
+
+    private fun toggleAutoMode() {
+        if (review.isRunning) {
+            review.cancel("auto stopped")
+            showStatus("Auto stopped")
+            return
+        }
+        ReviewSettings(this).resetDailyIfNeeded()
+        if (ReviewSettings(this).activeReviewerIds().isEmpty()) {
+            showStatus("No reviewers enabled — open Cfg")
+            return
+        }
+        if (!ensureQwen("Auto")) return
+        review.startAutoLoop()
+    }
+
+    /**
+     * Guarantees the Qwen tab is open before a run starts. Returns false when it
+     * had to switch tabs, telling the user to press the button again so nothing
+     * starts behind a tab they did not choose.
+     */
+    private fun ensureQwen(action: String): Boolean {
+        if (currentService?.id == ReviewController.QWEN) return true
+        val qwen = AiServices.findById(ReviewController.QWEN)
+        if (qwen == null) {
+            showStatus("Qwen service missing")
+            return false
+        }
+        openChat(qwen)
+        showStatus("$action needs Qwen — tap it again")
+        return false
+    }
+
+    /**
+     * Opens the settings overlay. Rows are rebuilt from [ReviewSettings] on every
+     * open (ReviewSettingsView.refresh() in init), so the state can never be
+     * stale, and the overlay removes itself on Close.
+     */
+    private fun openSettings() {
+        if (settingsOverlay != null) return
+        val overlay = ReviewSettingsView(this, ReviewSettings(this))
+        overlay.onResume = { review.resumeSaved() }
+        overlay.hasSavedSession = { review.hasSavedSession() }
+        overlay.onDismiss = { settingsOverlay = null }
+        settingsOverlay = overlay
+        addOverlay(overlay)
+    }
+
+    /** Adds a full-screen overlay above everything (Home and chat alike). */
+    private fun addOverlay(view: View) {
+        (findViewById<ViewGroup>(R.id.root)).addView(
+            view,
+            android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+    }
+
+    /** Expand/collapse the log panel. The text itself is always appended. */
+    private fun toggleLog() {
+        val existing = logOverlay
+        if (existing != null) {
+            (existing.parent as? android.view.ViewGroup)?.removeView(existing)
+            logOverlay = null
+            logText = null
+            return
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(getColor(R.color.background))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        panel.addView(TextView(this).apply {
+            text = "Review log"
+            setTextColor(getColor(R.color.text_primary))
+            textSize = 15f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        val scroller = ScrollView(this)
+        val body = TextView(this).apply {
+            setTextColor(getColor(R.color.text_muted))
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+        }
+        scroller.addView(body, FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        panel.addView(scroller, LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ).apply { topMargin = dp(8) })
+        panel.addView(android.widget.Button(this).apply {
+            text = "Close log"
+            setOnClickListener { toggleLog() }
+        })
+        logText = body
+        logOverlay = panel
+        refreshLog()
+        addOverlay(panel)
+    }
+
+    private fun refreshLog() {
+        val body = logText ?: return
+        body.text = ReviewLog.text(this).ifBlank { "(no entries yet)" }
+    }
+
+    private fun showStatus(text: String) {
+        txtReviewStatus.text = text
+    }
+
+    // ------------------------------------------------------------------
+    // Screen wake lock flag (no permission needed)
+    // ------------------------------------------------------------------
+
+    fun setKeepScreenOn(keepOn: Boolean) {
+        if (keepOn) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    private fun clearKeepScreenOn() = setKeepScreenOn(false)
+
+    /** Wired from the settings overlay: resume a saved session. */
+    internal fun resumeSavedSession() = review.resumeSaved()
 
     // ------------------------------------------------------------------
     // Helpers

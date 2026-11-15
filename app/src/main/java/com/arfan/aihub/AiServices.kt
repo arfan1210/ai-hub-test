@@ -52,6 +52,16 @@ object AiServices {
             desktopMode = true
         ),
         AiService(
+            id = "arena",
+            label = "Arena",
+            url = "https://arena.ai/agent",
+            role = "Builder/agent",
+            accent = 0xFF38BDF8.toInt(),
+            initial = "A",
+            // Arena's agent workspace is a wide, desktop-first layout.
+            desktopMode = true
+        ),
+        AiService(
             id = "gemini",
             label = "Gemini",
             url = "https://gemini.google.com",
