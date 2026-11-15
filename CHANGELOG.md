@@ -39,7 +39,7 @@ All notable changes to AI Hub. This file is maintained for **every** release
 
 **Commit 2 — automation**
 
-- `ReviewController` auto mode: reviewers rotate sequentially through the single
+- `ReviewController` auto mode (`Auto` button): reviewers rotate sequentially through the single
   WebView, all against one frozen snapshot per round. All PASS ends the run;
   otherwise the merged ISSUES text goes back to Qwen, the app polls until Qwen
   has genuinely finished and produced a new answer, then the next round starts,
