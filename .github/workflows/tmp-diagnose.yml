@@ -1,5 +1,7 @@
 name: tmp diagnose
-on: workflow_dispatch
+on:
+  push:
+    branches: [ arena/22783b17-ai-hub-test ]
 permissions:
   contents: write
   pull-requests: write
