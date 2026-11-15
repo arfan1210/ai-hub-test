@@ -35,9 +35,11 @@ data class ParsedVerdict(
 object VerdictParser {
 
     private val VERDICT_RE =
-        Regex("""VERDICT\s*[:\-]?\s*(PASS|REVISE|FAIL)\b""", RegexOption.IGNORE_CASE)
+        // Tolerates "VERDICT: PASS", "verdict - pass", "VERDICT = revise" and
+        // a bare "VERDICT PASS", because reviewers format it inconsistently.
+        Regex("""VERDICT\s*[:=\-]?\s*(PASS|REVISE|FAIL)\b""", RegexOption.IGNORE_CASE)
 
-    private val ISSUES_RE = Regex("""ISSUES?\s*[:\-]""", RegexOption.IGNORE_CASE)
+    private val ISSUES_RE = Regex("""ISSUES?\s*[:=\-]""", RegexOption.IGNORE_CASE)
 
     /** Our own prompt text — if this shows up, we captured the wrong node. */
     private const val PROMPT_MARKER = "You are a strict independent reviewer"
