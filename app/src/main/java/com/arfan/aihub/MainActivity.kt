@@ -491,7 +491,7 @@ class MainActivity : AppCompatActivity() {
             typeface = android.graphics.Typeface.MONOSPACE
             setTextIsSelectable(true)
         }
-        scroller.addView(body, ScrollView.LayoutParams(
+        scroller.addView(body, FrameLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         ))

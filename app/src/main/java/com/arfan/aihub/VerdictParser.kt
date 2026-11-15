@@ -72,7 +72,11 @@ object VerdictParser {
 
         return ParsedVerdict(
             verdict = verdict,
-            issues = if (verdict == Verdict.PASS) issues else issues.ifBlank { "(no issues listed)" },
+            issues = if (verdict == Verdict.PASS) {
+                issues.orEmpty()
+            } else {
+                issues.orEmpty().ifBlank { "(no issues listed)" }
+            },
             raw = text.take(MAX_RAW)
         )
     }
