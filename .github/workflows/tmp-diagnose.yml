@@ -21,19 +21,19 @@ jobs:
           gradle-version: '8.7'
       - name: Accept licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-      - name: Compile
-        run: gradle compileDebugKotlin --no-daemon > /tmp/out.txt 2>&1 || true
+      - name: Build and test
+        run: gradle assembleDebug testDebugUnitTest --no-daemon > /tmp/out.txt 2>&1 || true
       - name: Compile tests
-        run: gradle compileDebugUnitTestKotlin --no-daemon > /tmp/out2.txt 2>&1 || true
+        run: true > /tmp/out2.txt
       - name: Report
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
             echo '```'
-            grep -nE "^e: |^w: .*(unused|never used)|error:|FAILED|Could not" /tmp/out.txt | head -60
-            echo '--- unit test compile ---'
-            grep -nE "^e: |error:|FAILED" /tmp/out2.txt | head -60
+            grep -nE "^e: |error:|FAILED|Could not|tests completed|> There were failing" /tmp/out.txt | head -80
+            echo '--- failing tests ---'
+            grep -nE "^(com\.arfan|AppBehaviour|ReviewLogic)|FAILED|AssertionError|expected:" /tmp/out.txt | head -60
             echo '```'
           } > /tmp/body.md
           gh pr comment 4 --body-file /tmp/body.md
