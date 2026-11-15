@@ -1,0 +1,37 @@
+name: tmp diagnose
+on: workflow_dispatch
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: arena/22783b17-ai-hub-test
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Accept licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Compile
+        run: gradle compileDebugKotlin --no-daemon > /tmp/out.txt 2>&1 || true
+      - name: Compile tests
+        run: gradle compileDebugUnitTestKotlin --no-daemon > /tmp/out2.txt 2>&1 || true
+      - name: Report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '```'
+            grep -nE "^e: |^w: .*(unused|never used)|error:|FAILED|Could not" /tmp/out.txt | head -60
+            echo '--- unit test compile ---'
+            grep -nE "^e: |error:|FAILED" /tmp/out2.txt | head -60
+            echo '```'
+          } > /tmp/body.md
+          gh pr comment 4 --body-file /tmp/body.md
