@@ -107,6 +107,100 @@
 
         </LinearLayout>
 
+        <!-- Review loop bar: a SIBLING of the WebView container, never cleared
+             on a tab switch, so Review / Stop / Cfg stay reachable. -->
+        <LinearLayout
+            android:id="@+id/review_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/surface"
+            android:orientation="vertical"
+            android:paddingStart="8dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="4dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_review"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/btn_review"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_primary" />
+
+                <Button
+                    android:id="@+id/btn_auto"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/btn_auto"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_primary" />
+
+                <Button
+                    android:id="@+id/btn_senior"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/btn_senior"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_primary" />
+
+                <Button
+                    android:id="@+id/btn_stop"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/btn_stop"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_primary" />
+
+                <Button
+                    android:id="@+id/btn_cfg"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="@string/btn_cfg"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_primary" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/txt_review_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:paddingStart="6dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="6dp"
+                android:text="@string/review_idle"
+                android:textColor="@color/text_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <!-- Holds exactly one live WebView. -->
         <FrameLayout
             android:id="@+id/web_container"
