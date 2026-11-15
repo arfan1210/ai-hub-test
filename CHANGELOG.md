@@ -60,6 +60,9 @@ All notable changes to AI Hub. This file is maintained for **every** release
 
 ### Changed
 
+- `JsonUtil` (new, internal): the JSON read/escape helpers moved out of
+  `SiteAdapters` so they are unit-testable and testable from plain Kotlin. No
+  behaviour change and no new dependency.
 - Home subtitle reflects nine services.
 - `CHANGELOG.md` added; the README is now the project's memory (north star, AI
   agent instructions, architecture, pipeline, conventions, lessons, roadmap).
